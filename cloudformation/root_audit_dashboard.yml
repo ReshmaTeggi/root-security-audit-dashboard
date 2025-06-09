@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Root User MFA & Access Key Audit Dashboard
+
+Parameters:
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket where the Lambda zip file is stored
+  LambdaS3Key:
+    Type: String
+    Description: S3 key (object path) for the Lambda zip file
+
+Resources:
+  ##########################
+  # IAM Role for Lambda
+  ##########################
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: root-audit-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: root-audit-lambda-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource: !GetAtt AuditTable.Arn
+              - Effect: Allow
+                Action:
+                  - organizations:ListAccounts
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: 'arn:aws:iam::*:role/RootComplianceAuditRole'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  ##########################
+  # DynamoDB Table
+  ##########################
+  AuditTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: RootSecurityAuditResults
+      AttributeDefinitions:
+        - AttributeName: AccountId
+          AttributeType: S
+        - AttributeName: Timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: AccountId
+          KeyType: HASH
+        - AttributeName: Timestamp
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+
+  ##########################
+  # Lambda Function
+  ##########################
+  RootAuditLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: root-security-audit
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref AuditTable
+
+  ##########################
+  # EventBridge Rule
+  ##########################
+  AuditScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: root-security-audit-schedule
+      ScheduleExpression: rate(1 day)  # Run daily
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt RootAuditLambda.Arn
+          Id: LambdaTarget
+
+  ##########################
+  # Lambda Permission for EventBridge
+  ##########################
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RootAuditLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AuditScheduleRule.Arn
+
+Outputs:
+  AuditTableName:
+    Description: Name of the DynamoDB Table
+    Value: !Ref AuditTable
+  LambdaFunctionName:
+    Description: Name of the Lambda Function
+    Value: !Ref RootAuditLambda
