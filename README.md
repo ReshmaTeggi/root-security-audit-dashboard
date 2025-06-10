@@ -16,10 +16,10 @@ It centralizes the data in a DynamoDB table and can be visualized with AWS Quick
 ## 🏗️ Deploy Instructions
 
 1️⃣ Build the Lambda Deployment Package
-```bash
+bash
 cd lambda
 ./build.sh
-chmod +x lambda/build.sh```
+chmod +x lambda/build.sh
 
 Upload root_audit_lambda.zip to an S3 bucket.
 
